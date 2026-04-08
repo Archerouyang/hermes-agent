@@ -154,21 +154,23 @@ class DaytonaEnvironment(BaseEnvironment):
             return False
 
     def _sync_skills_and_credentials(self) -> None:
-        """Upload changed credential files and skill files into the sandbox."""
+        """Upload changed credential files into the sandbox.
+
+        Note: Skill files are not synced to the sandbox. Skills are loaded
+        on the host side by skill_view(), build_skills_system_prompt(), and
+        _load_skill_payload(). Syncing ~445 skill files (890 SDK round-trips)
+        added ~275s to every session start with no benefit.
+        """
         container_base = f"{self._remote_home}/.hermes"
         try:
-            from tools.credential_files import get_credential_file_mounts, iter_skills_files
+            from tools.credential_files import get_credential_file_mounts
 
             for mount_entry in get_credential_file_mounts():
                 remote_path = mount_entry["container_path"].replace("/root/.hermes", container_base, 1)
                 if self._upload_if_changed(mount_entry["host_path"], remote_path):
                     logger.debug("Daytona: synced credential %s", remote_path)
-
-            for entry in iter_skills_files(container_base=container_base):
-                if self._upload_if_changed(entry["host_path"], entry["container_path"]):
-                    logger.debug("Daytona: synced skill %s", entry["container_path"])
         except Exception as e:
-            logger.debug("Daytona: could not sync skills/credentials: %s", e)
+            logger.debug("Daytona: could not sync credentials: %s", e)
 
     def _ensure_sandbox_ready(self):
         """Restart sandbox if it was stopped (e.g., by a previous interrupt)."""

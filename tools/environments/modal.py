@@ -188,7 +188,6 @@ class ModalEnvironment(BaseModalExecutionEnvironment):
         try:
             from tools.credential_files import (
                 get_credential_file_mounts,
-                iter_skills_files,
                 iter_cache_files,
             )
 
@@ -205,17 +204,9 @@ class ModalEnvironment(BaseModalExecutionEnvironment):
                     mount_entry["container_path"],
                 )
 
-            # Mount individual skill files (symlinks filtered out).
-            skills_files = iter_skills_files()
-            for entry in skills_files:
-                cred_mounts.append(
-                    _modal.Mount.from_local_file(
-                        entry["host_path"],
-                        remote_path=entry["container_path"],
-                    )
-                )
-            if skills_files:
-                logger.info("Modal: mounting %d skill files", len(skills_files))
+            # Note: Skill files are not mounted. Skills are loaded on the host
+            # side and passed via system prompt. Mounting ~445 skill files
+            # added significant overhead with no benefit.
 
             # Mount host-side cache files (documents, images, audio,
             # screenshots).  New files arriving mid-session are picked up
@@ -336,7 +327,6 @@ class ModalEnvironment(BaseModalExecutionEnvironment):
         try:
             from tools.credential_files import (
                 get_credential_file_mounts,
-                iter_skills_files,
                 iter_cache_files,
             )
 
@@ -344,9 +334,8 @@ class ModalEnvironment(BaseModalExecutionEnvironment):
                 if self._push_file_to_sandbox(entry["host_path"], entry["container_path"]):
                     logger.debug("Modal: synced credential %s", entry["container_path"])
 
-            for entry in iter_skills_files():
-                if self._push_file_to_sandbox(entry["host_path"], entry["container_path"]):
-                    logger.debug("Modal: synced skill file %s", entry["container_path"])
+            # Note: Skill files are not synced. Skills are loaded on the host
+            # side and passed via system prompt.
 
             for entry in iter_cache_files():
                 if self._push_file_to_sandbox(entry["host_path"], entry["container_path"]):
