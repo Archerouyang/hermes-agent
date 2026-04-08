@@ -3,6 +3,21 @@
 .gitignore
 .gitmodules
 
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
 # Dependencies
 node_modules
 
@@ -11,5 +26,18 @@ node_modules
 
 # Environment files
 .env
+.env.*
 
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation
 *.md
