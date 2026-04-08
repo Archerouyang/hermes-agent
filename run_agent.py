@@ -49,6 +49,9 @@ from hermes_constants import get_hermes_home
 # User-managed env files should override stale shell exports on restart.
 from hermes_cli.env_loader import load_hermes_dotenv
 
+# Default timeout for detecting stale streams (seconds)
+_DEFAULT_STREAM_STALE_TIMEOUT = 180.0
+
 _hermes_home = get_hermes_home()
 _project_env = Path(__file__).parent / '.env'
 _loaded_env_paths = load_hermes_dotenv(hermes_home=_hermes_home, project_env=_project_env)
@@ -429,6 +432,27 @@ class AIAgent:
     def base_url(self, value: str) -> None:
         self._base_url = value
         self._base_url_lower = value.lower() if value else ""
+
+    def _is_local_provider(self) -> bool:
+        """Detect if provider is local (oMLX, Ollama, etc.) vs cloud API.
+
+        Local providers may have long prefill times that shouldn't trigger
+        stale stream detection.
+        """
+        base_url = str(self._base_url or "").lower()
+        # Local providers typically use localhost/127.0.0.1 or no URL
+        local_patterns = [
+            "localhost",
+            "127.0.0.1",
+            "::1",  # IPv6 localhost
+            "0.0.0.0",
+            "/tmp/",  # Unix sockets
+            "ollama",  # Common local setups
+            "omlx",  # oMLX local inference
+            "mlx",  # Apple MLX
+        ]
+        # Empty base_url typically means using default local provider
+        return any(p in base_url for p in local_patterns) or not base_url
 
     def __init__(
         self,
@@ -4702,19 +4726,27 @@ class AIAgent:
                 if request_client is not None:
                     self._close_request_openai_client(request_client, reason="stream_request_complete")
 
-        _stream_stale_timeout_base = float(os.getenv("HERMES_STREAM_STALE_TIMEOUT", 180.0))
+        _stream_stale_timeout_base = float(os.getenv("HERMES_STREAM_STALE_TIMEOUT", _DEFAULT_STREAM_STALE_TIMEOUT))
         # Scale the stale timeout for large contexts: slow models (like Opus)
         # can legitimately think for minutes before producing the first token
         # when the context is large.  Without this, the stale detector kills
         # healthy connections during the model's thinking phase, producing
         # spurious RemoteProtocolError ("peer closed connection").
-        _est_tokens = sum(len(str(v)) for v in api_kwargs.get("messages", [])) // 4
-        if _est_tokens > 100_000:
-            _stream_stale_timeout = max(_stream_stale_timeout_base, 300.0)
-        elif _est_tokens > 50_000:
-            _stream_stale_timeout = max(_stream_stale_timeout_base, 240.0)
+
+        # Local providers (oMLX, Ollama, etc.) may take much longer for prefill
+        # without being "stale". Disable timeout for local providers unless
+        # explicitly configured via HERMES_STREAM_STALE_TIMEOUT.
+        if _stream_stale_timeout_base == _DEFAULT_STREAM_STALE_TIMEOUT and self._is_local_provider():
+            _stream_stale_timeout = float('inf')  # No timeout for local providers
+            logger.debug("Local provider detected, disabling stale stream timeout")
         else:
-            _stream_stale_timeout = _stream_stale_timeout_base
+            _est_tokens = sum(len(str(v)) for v in api_kwargs.get("messages", [])) // 4
+            if _est_tokens > 100_000:
+                _stream_stale_timeout = max(_stream_stale_timeout_base, 300.0)
+            elif _est_tokens > 50_000:
+                _stream_stale_timeout = max(_stream_stale_timeout_base, 240.0)
+            else:
+                _stream_stale_timeout = _stream_stale_timeout_base
 
         t = threading.Thread(target=_call, daemon=True)
         t.start()
@@ -4725,7 +4757,7 @@ class AIAgent:
             # but delivering no real chunks.  Kill the client so the
             # inner retry loop can start a fresh connection.
             _stale_elapsed = time.time() - last_chunk_time["t"]
-            if _stale_elapsed > _stream_stale_timeout:
+            if _stream_stale_timeout != float('inf') and _stale_elapsed > _stream_stale_timeout:
                 _est_ctx = sum(len(str(v)) for v in api_kwargs.get("messages", [])) // 4
                 logger.warning(
                     "Stream stale for %.0fs (threshold %.0fs) — no chunks received. "
