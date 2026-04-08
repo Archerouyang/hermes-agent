@@ -26,6 +26,7 @@ import threading
 from typing import Any, Dict, List
 
 from agent.memory_provider import MemoryProvider
+from hermes_constants import get_hermes_home
 from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
